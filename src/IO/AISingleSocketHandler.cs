@@ -16,6 +16,7 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices.ComTypes;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -28,12 +29,18 @@ namespace Sufficit.Asterisk.IO
     ///     Asterisk Interface Single Socket Handler. (Refactored for Async and Performance)
     ///     Handles an active socket connection for Asterisk interfaces, Manager and Gateway.
     /// </summary>
-    public class AISingleSocketHandler : ISocketConnection, IDisposable
+    public class AISingleSocketHandler : ISocketConnection, IDisposable, IAsyncDisposable
     {
         #region Static Counters & Regex
 
         public static int Running { get; private set; }
         public static int InMemory { get; private set; }
+
+        /// <inheritdoc cref="ISocketStatus.IsConnected"/>
+        public bool IsConnected => !IsDisposed && _socket.Connected;
+
+        /// <inheritdoc cref="ISocketStatus.TotalBytesReceived"/>
+        public ulong TotalBytesReceived { get; private set; }
 
         public static Regex AGI_STATUS_PATTERN_NAMED = new Regex(@"^(?<code>\d{3})[ -]", RegexOptions.Compiled);
         public const string AGI_REPLY_HANGUP = "HANGUP";
@@ -44,6 +51,12 @@ namespace Sufficit.Asterisk.IO
         private readonly Socket _socket;
         private readonly NetworkStream _stream;
 
+        /// <summary>
+        /// An unbounded channel used for the async producer-consumer pipeline.
+        /// The background reading task acts as the producer, writing lines
+        /// from the socket, while the public 'Read' methods act as consumers,
+        /// reading lines from this channel.
+        /// </summary>
         private readonly Channel<string?> _lineChannel;
 
         private readonly CancellationTokenSource _internalCts;
@@ -57,7 +70,7 @@ namespace Sufficit.Asterisk.IO
         public AGISocketOptions Options { get; }
         public bool IsDisposed { get; private set; }
 
-        public AISingleSocketHandler(ILogger logger, AGISocketOptions options, Socket socket, CancellationToken externalToken = default)
+        public AISingleSocketHandler (ILogger logger, AGISocketOptions options, Socket socket, CancellationToken externalToken = default)
         {
             InMemory++;
             Running++;
@@ -71,7 +84,7 @@ namespace Sufficit.Asterisk.IO
 
             _stream = new NetworkStream(_socket, true);
             _lineChannel = Channel.CreateUnbounded<string?>(new UnboundedChannelOptions { SingleReader = true });
-
+            
             // Link the internal CTS with an optional external one.
             // If the external token is cancelled, our internal token will also be cancelled.
             _internalCts = CancellationTokenSource.CreateLinkedTokenSource(externalToken);
@@ -82,34 +95,40 @@ namespace Sufficit.Asterisk.IO
             // Start the background reading task immediately using the modern async pattern
             _backgroundReadingTask = BackgroundReadingAsync(_internalCts.Token);
 
-            _logger.LogDebug("({hash}) Async socket handler instantiated. Socket id: {socket}", GetHashCode(), socket.Handle);
+            _logger.LogDebug("async socket handler instantiated, hash: {hash}, socket id: {socket}", GetHashCode(), socket.Handle);
         }
 
         ~AISingleSocketHandler() => Dispose(false);
 
         #region Core Reading Loop (Async & Efficient)
 
-        private async Task BackgroundReadingAsync(CancellationToken token)
+        private async Task BackgroundReadingAsync (CancellationToken cancellationToken)
         {
-            // Create the buffer ONCE and reuse it. This dramatically reduces memory allocation.
+            // create the buffer ONCE and reuse it. This dramatically reduces memory allocation.
             var buffer = new byte[Options.BufferSize];
 
-            _logger.LogInformation("({hash}) Starting async receiver loop. Socket id: {socket}", GetHashCode(), _socket.Handle);
+            _logger.LogDebug("starting async receiver loop, hash: {hash}, socket id: {socket}", GetHashCode(), _socket.Handle);
+            AGISocketReason cause;
 
             try
             {
-                while (!token.IsCancellationRequested)
+                while (true)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
+
                     // Use modern, non-blocking async I/O
-                    int bytesRead = await _stream.ReadAsync(buffer, 0, buffer.Length, token);
+                    int bytesRead = await _stream.ReadAsync(buffer, 0, buffer.Length, cancellationToken);
 
                     // A read of 0 bytes indicates a graceful shutdown by the peer.
                     if (bytesRead == 0)
                     {
-                        _logger.LogInformation("({hash}) Connection gracefully closed by peer.", GetHashCode());
-                        DisconnectedTrigger(AGISocketReason.NOTRECEIVING);
+                        _logger.LogInformation("connection gracefully closed by peer, hash: {hash}", GetHashCode());
+                        cause = AGISocketReason.NOTRECEIVING;
                         break;
                     }
+
+                    // Update the total bytes received counter
+                    TotalBytesReceived += (ulong)bytesRead;
 
                     // Process the received data efficiently
                     ProcessReceivedData(buffer, bytesRead);
@@ -117,24 +136,63 @@ namespace Sufficit.Asterisk.IO
             }
             catch (OperationCanceledException)
             {
-                _logger.LogTrace("({hash}) Receiving loop was canceled.", GetHashCode());
+                _logger.LogTrace("receiving loop was canceled, hash: {hash}", GetHashCode());
+                cause = AGISocketReason.CANCELLED;
+            }
+            catch (ObjectDisposedException)
+            {
+                // This is expected when the stream is disposed from another thread.
+                // We catch it here to prevent it from being an unhandled exception.
+                _logger.LogTrace("receiving loop stopped because the socket was disposed, hash: {hash}", GetHashCode());
+                cause = AGISocketReason.DISPOSED;
             }
             catch (IOException ex) when (ex.InnerException is SocketException sex)
             {
+                _logger.LogError(ex, "io exception in receiver loop, hash: {hash}", GetHashCode());
+
                 // Unpack the underlying socket exception for better error handling
-                TriggerSocketException(sex);
+                cause = await TriggerSocketException(sex);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "({hash}) Unhandled exception in receiver loop.", GetHashCode());
-                DisconnectedTrigger(AGISocketReason.UNKNOWN);
+                _logger.LogError(ex, "unhandled exception in receiver loop, hash: {hash}", GetHashCode());
+                cause = AGISocketReason.UNKNOWN;
             }
-            finally
+
+            _logger.LogDebug("async receiver loop finished, hash: {hash}, cause: {cause}", GetHashCode(), cause);
+            Running--;
+
+            // Mark the channel as complete, allowing consumers (e.g., ReadQueue) to finish processing any remaining items
+            // and gracefully exit their 'await foreach' loops.
+            _ = _lineChannel.Writer.TryComplete();
+
+            // Always ensure we trigger the disconnect event
+            DisconnectedTrigger(cause);            
+        }
+
+        /// <summary>
+        /// Stops the background reading task and waits for its completion.
+        /// </summary>
+        /// <remarks>This method ensures that the background reading task is properly stopped by signaling
+        /// cancellation and awaiting its completion. If the task is already completed, no action is taken.</remarks>
+        /// <returns>A <see cref="ValueTask"/> that represents the asynchronous operation of stopping and awaiting the background
+        /// reading task.</returns>
+        private async ValueTask StopAndAwaitReaderTask()
+        {
+            if (_backgroundReadingTask != null)
             {
-                _logger.LogInformation("({hash}) Async receiver loop finished.", GetHashCode());
-                Running--;
-                // Ensure the buffer is marked as complete for any consumers
-                _lineChannel.Writer.Complete();
+                if (!_backgroundReadingTask.IsCompleted)
+                {
+                    if (!_internalCts.IsCancellationRequested)
+                    {
+                        _logger.LogInformation("stopping background reading task, hash: {hash}", GetHashCode());
+
+                        // Cancel the internal CTS to signal the background task to stop
+                        _internalCts.Cancel();
+                    }
+
+                    await _backgroundReadingTask;
+                }
             }
         }
 
@@ -193,7 +251,7 @@ namespace Sufficit.Asterisk.IO
 
                 if (!_lineChannel.Writer.TryWrite(line))
                 {
-                    _logger.LogWarning("({hash}) Failed to write line to channel.", GetHashCode());
+                    _logger.LogWarning("failed to write line to channel, hash: {hash}", GetHashCode());
                 }
             }
         }
@@ -204,7 +262,7 @@ namespace Sufficit.Asterisk.IO
 
         public NetworkStream? GetStream() => !IsDisposed ? _stream : null;
 
-        public async IAsyncEnumerable<string> ReadQueue([EnumeratorCancellation] CancellationToken cancellationToken)
+        public async IAsyncEnumerable<string> ReadQueue ([EnumeratorCancellation] CancellationToken cancellationToken)
         {
             // This returns an async stream that can be consumed with 'await foreach'
             await foreach (var line in _lineChannel.Reader.ReadAllAsync(cancellationToken))
@@ -287,55 +345,33 @@ namespace Sufficit.Asterisk.IO
             }
         }
 
-        public void Write(string s)
+        public async Task WriteAsync (string data, CancellationToken cancellationToken)
         {
             if (!IsConnected)
                 throw new NotConnectedException("Socket is not connected or has been disposed.");
-
-            var bytes = Options.Encoding.GetBytes(s);
+            
+            var bytes = Options.Encoding.GetBytes(data);
             try
             {
-                _stream.Write(bytes, 0, bytes.Length);
+                await _stream.WriteAsync(bytes, 0, bytes.Length, cancellationToken);
             }
             catch (IOException ex) when (ex.InnerException is SocketException sex)
             {
-                TriggerSocketException(sex);
+                _logger.LogError(ex, "error writing to socket, hash: {hash}, socket id: {socket}", GetHashCode(), _socket.Handle);
+                //await TriggerSocketException(sex);
                 throw;
             }
-        }
-
-        /// <summary>
-        ///     Indicates that <see cref="Close(string?)"></see> was already called />
-        /// </summary>
-        public bool IsCloseRequested { get; private set; }
-
-        public void Close (AGISocketReason reason)
-        {
-            if (IsDisposed) return;
-            if (IsCloseRequested) return;
-            IsCloseRequested = true;
-            
-            if (!reason.HasFlag(AGISocketReason.NORMALENDING))
-                _logger.LogWarning("({hash}) Closing connection, reason: {cause}", GetHashCode(), reason);
-
-            DisconnectedTrigger(reason);
-
-            // This will signal the background reading task to stop.
-            if (!_internalCts.IsCancellationRequested)
-                _internalCts.Cancel();
-        }
-
-        public void Close(string? reason = null)
-        {          
-            _logger.LogWarning("({hash}) Closing connection, reason: {cause}", GetHashCode(), reason ?? "N/A");
-            Close(AGISocketReason.UNKNOWN);
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "unexpected error writing to socket, hash: {hash}, socket id: {socket}", GetHashCode(), _socket.Handle);
+                throw;
+            }
         }
 
         #endregion
 
         #region Properties
 
-        public bool IsConnected => !IsDisposed && _socket.Connected;
         public IPAddress? LocalAddress => (_socket.LocalEndPoint as IPEndPoint)?.Address;
         public int LocalPort => (_socket.LocalEndPoint as IPEndPoint)?.Port ?? 0;
         public IPAddress? RemoteAddress => (_socket.RemoteEndPoint as IPEndPoint)?.Address;
@@ -377,29 +413,25 @@ namespace Sufficit.Asterisk.IO
         private void HangUpTrigger()
         {
             IsHangUp = true;
-            _logger.LogTrace("({hash}) HangUp detected.", GetHashCode());
+            _logger.LogTrace("hangup detected, hash: {hash}", GetHashCode());
             OnHangUp?.Invoke(this, EventArgs.Empty);
         }
 
-        private void DisconnectedTrigger(AGISocketReason reason)
+        private void DisconnectedTrigger (AGISocketReason reason)
         {
             // Ensure this logic only runs once using Interlocked
             if (Interlocked.CompareExchange(ref _isDisconnectTriggered, 1, 0) == 0)
             {
                 if (!reason.HasFlag(AGISocketReason.NORMALENDING))
-                    _logger.LogWarning("({hash}) Disconnected triggered, reason: {reason}", GetHashCode(), reason);
+                    _logger.LogWarning("disconnected triggered, hash: {hash}, reason: {reason}", GetHashCode(), reason);
 
                 OnDisconnected?.Invoke(this, reason);
-
-                // Trigger the cancellation token to stop the reader task
-                if (!_internalCts.IsCancellationRequested)
-                    _internalCts.Cancel();
             }
         }
 
-        private void TriggerSocketException(SocketException ex)
+        private async ValueTask<AGISocketReason> TriggerSocketException (SocketException ex)
         {
-            AGISocketReason cause = ex.SocketErrorCode switch
+            var cause = ex.SocketErrorCode switch
             {
                 SocketError.ConnectionAborted => AGISocketReason.ABORTED,
                 SocketError.ConnectionReset => AGISocketReason.RESETED,
@@ -407,24 +439,31 @@ namespace Sufficit.Asterisk.IO
             };
 
             if (cause != AGISocketReason.UNKNOWN)
-                _logger.LogDebug("({hash}) Socket exception triggered: {reason} ({code})", GetHashCode(), cause, ex.SocketErrorCode);
+                _logger.LogDebug("socket exception triggered, hash: {hash}, cause: {cause}, code: {code}", GetHashCode(), cause, ex.SocketErrorCode);
             else
-                _logger.LogError(ex, "({hash}) Unknown socket exception: {code}", GetHashCode(), ex.SocketErrorCode);
+                _logger.LogError(ex, "unknown socket exception, hash: {hash}, code: {code}", GetHashCode(), ex.SocketErrorCode);
 
-            DisconnectedTrigger(cause);
+            await StopAndAwaitReaderTask();
+            return cause;
         }
 
         #endregion
 
         #region Dispose Pattern
 
+        /// <summary>
+        /// This is the synchronous Dispose method. It should not block.
+        /// It's mainly for backward compatibility and to be called by the finalizer.
+        /// Use DisposeAsync for graceful shutdown.
+        /// </summary>
         public void Dispose()
         {
             Dispose(true);
+            // Suppress finalization if we are disposing through the synchronous path.
             GC.SuppressFinalize(this);
         }
 
-        protected virtual void Dispose(bool disposing)
+        protected virtual void Dispose (bool disposing)
         {
             if (IsDisposed) return;
             IsDisposed = true;
@@ -434,38 +473,58 @@ namespace Sufficit.Asterisk.IO
 
             if (disposing)
             {
-                // Signal the background task to stop
-                if (!_internalCts.IsCancellationRequested)
-                {
-                    _internalCts.Cancel();
-                }
+                _logger.LogTrace("synchronous disposing of handler, hash: {hash}", GetHashCode());
+                // Signal cancellation to the background task, but do not wait for it to complete.
+                // If someone calls this synchronous Dispose, they won't block, but the background
+                // task might still be running for a short time until it checks the token.
+                if (!_internalCts.IsCancellationRequested)                
+                    _internalCts.Cancel();                
+
+                // Dispose the internal CTS.
+                _internalCts.Dispose();
 
                 // Disposing the stream will close the underlying socket.
                 _stream.Dispose();
-                _lineChannel.Writer.Complete();
-                _internalCts.Dispose();
 
-                try
-                {
-                    // It's good practice to wait for the task to complete, but with a timeout
-                    // to avoid blocking indefinitely.
-                    _backgroundReadingTask.Wait(1000);
-                }
-                catch (Exception ex)
-                {
-                    // This is expected if the task was canceled or faulted.
-                    _logger.LogDebug(ex, "Exception while waiting for background task to complete during dispose.");
-                }
-                finally
-                {
-                    _backgroundReadingTask.Dispose();
-                }
+                // Mark the channel as complete.
+                _ = _lineChannel.Writer.TryComplete();
+
+                // We don't dispose of the Task here; it will complete on its own.
+                // It's good practice not to dispose a Task object directly.
             }
 
             // Clear events to prevent memory leaks
             OnDisposing = null;
             OnDisconnected = null;
             OnHangUp = null;
+        }
+
+        /// <summary>
+        /// Asynchronously releases the resources, ensuring the background reading task completes gracefully.
+        /// This is the recommended method for disposing of the socket handler.
+        /// </summary>
+        public async ValueTask DisposeAsync()
+        {
+            if (IsDisposed)
+            {
+                return;
+            }
+
+            _logger.LogInformation("async disposing of handler, hash: {hash}", GetHashCode());
+
+            // Signal cancellation to the background task.
+            if (!_internalCts.IsCancellationRequested)            
+                _internalCts.Cancel();            
+
+            // Await the background task's completion. This is the key to non-blocking disposal.
+            await _backgroundReadingTask;
+
+            // Call the synchronous Dispose to clean up other resources.
+            // The 'disposing' parameter is 'true' to signal that this is a managed resource cleanup.
+            Dispose(true);
+
+            // Suppress finalization, as the disposal has been handled.
+            GC.SuppressFinalize(this);
         }
 
         #endregion

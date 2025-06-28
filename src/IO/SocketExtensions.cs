@@ -19,8 +19,11 @@ namespace Sufficit.Asterisk.IO
         public static bool IsRemoteRequest(this TcpClient source)
             => IsRemoteRequest(source.Client.RemoteEndPoint, source.Client.LocalEndPoint);
 
-        public static bool IsRemoteRequest(EndPoint remote, EndPoint local)
+        public static bool IsRemoteRequest(EndPoint? remote, EndPoint? local)
         {
+            if (remote == null)
+                return false;
+
             if (remote is IPEndPoint remoteIp && local is IPEndPoint localIp)
             {
                 if (remoteIp.Address.MapToIPv4().Equals(localIp.Address.MapToIPv4()))
