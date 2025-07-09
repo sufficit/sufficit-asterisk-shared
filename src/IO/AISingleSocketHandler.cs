@@ -151,7 +151,7 @@ namespace Sufficit.Asterisk.IO
                 _logger.LogError(ex, "io exception in receiver loop, hash: {hash}", GetHashCode());
 
                 // Unpack the underlying socket exception for better error handling
-                cause = await TriggerSocketException(sex);
+                cause = TriggerSocketException(sex);
             }
             catch (Exception ex)
             {
@@ -429,7 +429,7 @@ namespace Sufficit.Asterisk.IO
             }
         }
 
-        private async ValueTask<AGISocketReason> TriggerSocketException (SocketException ex)
+        private AGISocketReason TriggerSocketException (SocketException ex)
         {
             var cause = ex.SocketErrorCode switch
             {
@@ -443,7 +443,7 @@ namespace Sufficit.Asterisk.IO
             else
                 _logger.LogError(ex, "unknown socket exception, hash: {hash}, code: {code}", GetHashCode(), ex.SocketErrorCode);
 
-            await StopAndAwaitReaderTask();
+            // We are already inside the background reading task, so just return the cause
             return cause;
         }
 
