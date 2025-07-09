@@ -10,13 +10,11 @@
 
 using Microsoft.Extensions.Logging;
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices.ComTypes;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -116,8 +114,13 @@ namespace Sufficit.Asterisk.IO
                 {
                     cancellationToken.ThrowIfCancellationRequested();
 
-                    // Use modern, non-blocking async I/O
+#if NETSTANDARD2_0
+                    // .NET Standard 2.0: Use the legacy byte array overload
                     int bytesRead = await _stream.ReadAsync(buffer, 0, buffer.Length, cancellationToken);
+#else
+                    // .NET 7+: Use modern Memory<byte> overload for better performance
+                    int bytesRead = await _stream.ReadAsync(buffer.AsMemory(), cancellationToken);
+#endif
 
                     // A read of 0 bytes indicates a graceful shutdown by the peer.
                     if (bytesRead == 0)
@@ -353,7 +356,13 @@ namespace Sufficit.Asterisk.IO
             var bytes = Options.Encoding.GetBytes(data);
             try
             {
+#if NETSTANDARD2_0
+                // .NET Standard 2.0: Use the legacy byte array overload
                 await _stream.WriteAsync(bytes, 0, bytes.Length, cancellationToken);
+#else
+                // .NET 7+: Use modern Memory<byte> overload for better performance
+                await _stream.WriteAsync(bytes.AsMemory(), cancellationToken);
+#endif
             }
             catch (IOException ex) when (ex.InnerException is SocketException sex)
             {
