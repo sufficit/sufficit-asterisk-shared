@@ -1,10 +1,6 @@
-﻿using Sufficit;
-using Sufficit.Asterisk.Manager;
-using System;
-using System.Collections.Generic;
-using System.Text;
+﻿using System;
 
-namespace AsterNET.Helpers
+namespace Sufficit.Asterisk.Helpers
 {
     public static class HelperExtensions
     {

@@ -5,13 +5,12 @@ using System.Globalization;
 using System.Reflection;
 using System.Text;
 using Microsoft.Extensions.Logging;
-using Sufficit.Asterisk;
 
-namespace AsterNET.Helpers
+namespace Sufficit.Asterisk.Helpers
 {
     public static class Helper
     {
-        private static readonly ILogger _logger = AsterNETLogger.CreateLogger(typeof(Helper));
+        private static readonly ILogger _logger = AsteriskLogger.CreateLogger(typeof(Helper));
         private static CultureInfo CultureInfo => Sufficit.Asterisk.Defaults.CultureInfo;
 
         #region ToHexString(sbyte[]) 
@@ -304,7 +303,7 @@ namespace AsterNET.Helpers
         /// <summary>
         ///     Convert object with all properties to string
         /// </summary>
-        public static string ToString(object obj, Type type)
+        public static string ToString(object? obj, Type type)
         {
             object? value;
             var sb = new StringBuilder(type.Name, 1024);
@@ -458,6 +457,7 @@ namespace AsterNET.Helpers
         }
 
         /// <inheritdoc cref="ToString(object, Type)"/>
+        [Obsolete("Not Used Anymore.")]
         public static string ToString<T>(T obj)
             => ToString(obj, typeof(T));
 

@@ -1,16 +1,13 @@
 ﻿using Microsoft.Extensions.Logging;
-using Sufficit.Asterisk;
 using Sufficit.Asterisk.Manager;
 using System;
-using System.Collections.Generic;
 using System.Globalization;
-using System.Text;
 
-namespace AsterNET.Helpers
+namespace Sufficit.Asterisk.Helpers
 {
     public static class FromStringBuilderHelper
     {
-        private static readonly ILogger _logger = AsterNETLogger.CreateLogger(typeof(FromStringBuilderHelper));
+        private static readonly ILogger _logger = AsteriskLogger.CreateLogger(typeof(FromStringBuilderHelper));
         private static CultureInfo CultureInfo => Sufficit.Asterisk.Defaults.CultureInfo;
 
 
@@ -121,7 +118,7 @@ namespace AsterNET.Helpers
                 try
                 {
                     var constructor = type.GetConstructor(new[] { typeof(string) });
-                    return constructor.Invoke(new object?[] { value });
+                    return constructor?.Invoke(new object?[] { value });
                 }
                 catch (Exception ex)
                 {

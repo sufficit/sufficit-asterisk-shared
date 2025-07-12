@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
 
-namespace AsterNET.Util
+namespace Sufficit.Asterisk.Util
 {
     /// <summary>
     ///     Encapsulates the functionality of message digest algorithms such as SHA-1 or MD5.
@@ -18,7 +18,7 @@ namespace AsterNET.Util
         public MD5Support(string algorithm)
         {
             var algorithmName = algorithm.Equals("SHA-1") ? "SHA" : algorithm;
-            _algorithm = (HashAlgorithm) CryptoConfig.CreateFromName(algorithmName);
+            _algorithm = (HashAlgorithm) CryptoConfig.CreateFromName(algorithmName)!;
             data = new byte[0];
             _position = 0;
         }

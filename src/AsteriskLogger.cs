@@ -3,9 +3,9 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 
-namespace AsterNET
+namespace Sufficit.Asterisk
 {
-    public static class AsterNETLogger
+    public static class AsteriskLogger
     {
         public static ILoggerFactory LoggerFactory { get; set; } = new LoggerFactory();
 
