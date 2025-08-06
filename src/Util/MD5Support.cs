@@ -37,7 +37,7 @@ namespace Sufficit.Asterisk.Util
                 var sbytes = new sbyte[bytes.Length];
                 for (var i = 0; i < bytes.Length; i++)
                     sbytes[i] = (sbyte) bytes[i];
-                data = null;
+                data = new byte[0];
                 _position = 0;
                 return sbytes;
             }
