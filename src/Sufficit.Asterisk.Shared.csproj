@@ -66,36 +66,41 @@
 		</None>
 	</ItemGroup>
 
-	<!-- #region Sufficit Versioning Options V:202508221812 -->
+	<!-- #region Sufficit Versioning Options V:202508251150 -->
 
 	<PropertyGroup Label="Sufficit Versioning Options" Condition="'$(TargetFramework)' == 'netstandard2.0'">
 		<PkgVersion>[9.*,10.0.0)</PkgVersion>
+		<PkgVersionUntil8>[*,10.0.0)</PkgVersionUntil8>
 		<NoWarn>$(NoWarn);nullable</NoWarn>
 
 		<!-- Set language version per framework to ensure compatibility with generated global usings -->
-		<LangVersion>8.0</LangVersion>
+		<LangVersion>9.0</LangVersion>
 	</PropertyGroup>
 
 	<PropertyGroup Label="Sufficit Versioning Options" Condition=" '$(TargetFramework)' == 'net6.0' ">
 		<PkgVersion>[*,7.0.0)</PkgVersion>
+		<PkgVersionUntil8>[8.*,10.0.0)</PkgVersionUntil8>
 		<LangVersion>10.0</LangVersion>
 		<Nullable>enable</Nullable>
 	</PropertyGroup>
 
 	<PropertyGroup Label="Sufficit Versioning Options" Condition=" '$(TargetFramework)' == 'net7.0' ">
 		<PkgVersion>[*,8.0.0)</PkgVersion>
+		<PkgVersionUntil8>[8.*,10.0.0)</PkgVersionUntil8>
 		<LangVersion>10.0</LangVersion>
 		<Nullable>enable</Nullable>
 	</PropertyGroup>
 
 	<PropertyGroup Label="Sufficit Versioning Options" Condition=" '$(TargetFramework)' == 'net8.0' ">
 		<PkgVersion>[8.*,10.0.0)</PkgVersion>
+		<PkgVersionUntil8>[*,10.0.0)</PkgVersionUntil8>
 		<LangVersion>10.0</LangVersion>
 		<Nullable>enable</Nullable>
 	</PropertyGroup>
 
 	<PropertyGroup Label="Sufficit Versioning Options" Condition=" '$(TargetFramework)' == 'net9.0' ">
 		<PkgVersion>[9.*,10.0.0)</PkgVersion>
+		<PkgVersionUntil8>[*,10.0.0)</PkgVersionUntil8>
 		<LangVersion>10.0</LangVersion>
 		<Nullable>enable</Nullable>
 	</PropertyGroup>
@@ -104,7 +109,8 @@
 
 	<ItemGroup>
 		<PackageReference Include="Microsoft.AspNetCore.Http.Connections.Common" Version="$(PkgVersion)" />
-		<PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="$(PkgVersion)" />
+		
+		<PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="$(PkgVersionUntil8)" />
 		<PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="$(PkgVersion)" />
 		<PackageReference Include="Microsoft.Extensions.Identity.Stores" Version="$(PkgVersion)" />
 		<PackageReference Include="Microsoft.Extensions.Logging" Version="$(PkgVersion)" />
@@ -113,7 +119,7 @@
 		<PackageReference Include="Microsoft.Extensions.Options" Version="$(PkgVersion)" />
 		<PackageReference Include="System.Text.Json" Version="[8.0.5,9.0.0)" Condition=" '$(TargetFramework)' == 'net6.0' OR '$(TargetFramework)' == 'net7.0' " />
 		<PackageReference Include="System.Text.Json" Version="$(PkgVersion)" Condition=" '$(TargetFramework)' == 'net8.0' OR '$(TargetFramework)' == 'net9.0' OR '$(TargetFramework)' == 'netstandard2.0' " />		
-		<PackageReference Include="System.Threading.Channels" Version="$(PkgVersion)" />
+		<PackageReference Include="System.Threading.Channels" Version="$(PkgVersionUntil8)" />
 	</ItemGroup>
 
 	<ItemGroup Label="Sufficit Dependencies">
