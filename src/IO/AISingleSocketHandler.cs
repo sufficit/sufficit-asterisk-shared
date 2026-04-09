@@ -151,10 +151,12 @@ namespace Sufficit.Asterisk.IO
             }
             catch (IOException ex) when (ex.InnerException is SocketException sex)
             {
-                _logger.LogError(ex, "io exception in receiver loop, hash: {hash}", GetHashCode());
-
-                // Unpack the underlying socket exception for better error handling
                 cause = TriggerSocketException(sex);
+
+                if (cause is AGISocketReason.RESETED or AGISocketReason.ABORTED)
+                    _logger.LogDebug("peer closed the socket while receiver loop was active, hash: {hash}, cause: {cause}, code: {code}", GetHashCode(), cause, sex.SocketErrorCode);
+                else
+                    _logger.LogError(ex, "io exception in receiver loop, hash: {hash}", GetHashCode());
             }
             catch (Exception ex)
             {
@@ -431,7 +433,9 @@ namespace Sufficit.Asterisk.IO
             // Ensure this logic only runs once using Interlocked
             if (Interlocked.CompareExchange(ref _isDisconnectTriggered, 1, 0) == 0)
             {
-                if (!reason.HasFlag(AGISocketReason.NORMALENDING))
+                if (reason is AGISocketReason.RESETED or AGISocketReason.ABORTED)
+                    _logger.LogDebug("disconnected triggered, hash: {hash}, reason: {reason}", GetHashCode(), reason);
+                else if (!reason.HasFlag(AGISocketReason.NORMALENDING))
                     _logger.LogWarning("disconnected triggered, hash: {hash}, reason: {reason}", GetHashCode(), reason);
 
                 OnDisconnected?.Invoke(this, reason);
