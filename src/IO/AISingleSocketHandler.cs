@@ -50,7 +50,7 @@ namespace Sufficit.Asterisk.IO
         private readonly NetworkStream _stream;
 
         /// <summary>
-        /// An unbounded channel used for the async producer-consumer pipeline.
+        /// An optionally bounded channel used for the async producer-consumer pipeline.
         /// The background reading task acts as the producer, writing lines
         /// from the socket, while the public 'Read' methods act as consumers,
         /// reading lines from this channel.
@@ -67,9 +67,12 @@ namespace Sufficit.Asterisk.IO
 
         public AGISocketOptions Options { get; }
         public bool IsDisposed { get; private set; }
+        public bool ReceiveLimitExceeded { get; private set; }
 
         public AISingleSocketHandler (ILogger logger, AGISocketOptions options, Socket socket, CancellationToken externalToken = default)
         {
+            if (options.ReceiveLineCapacity < 0 || options.ReceiveMaxLineChars < 0)
+                throw new ArgumentOutOfRangeException(nameof(options));
             InMemory++;
             Running++;
 
@@ -81,7 +84,10 @@ namespace Sufficit.Asterisk.IO
             Options = options;
 
             _stream = new NetworkStream(_socket, true);
-            _lineChannel = Channel.CreateUnbounded<string?>(new UnboundedChannelOptions { SingleReader = true });
+            _lineChannel = options.ReceiveLineCapacity > 0
+                ? Channel.CreateBounded<string?>(new BoundedChannelOptions(options.ReceiveLineCapacity)
+                    { SingleReader = true, FullMode = BoundedChannelFullMode.Wait })
+                : Channel.CreateUnbounded<string?>(new UnboundedChannelOptions { SingleReader = true });
             
             // Link the internal CTS with an optional external one.
             // If the external token is cancelled, our internal token will also be cancelled.
@@ -136,6 +142,12 @@ namespace Sufficit.Asterisk.IO
                     // Process the received data efficiently
                     ProcessReceivedData(buffer, bytesRead);
                 }
+            }
+            catch (IOException) when (ReceiveLimitExceeded)
+            {
+                _logger.LogWarning("Receive limit exceeded; closing socket without dropping frames silently");
+                cause = AGISocketReason.UNKNOWN;
+                _stream.Dispose();
             }
             catch (OperationCanceledException)
             {
@@ -239,11 +251,17 @@ namespace Sufficit.Asterisk.IO
                     {
                         lineLength--;
                     }
+                    if (Options.ReceiveMaxLineChars > 0 && lineLength > Options.ReceiveMaxLineChars)
+                        FailReceiveLimit();
                     line = _stringBuilder.ToString(0, lineLength);
                     _stringBuilder.Remove(0, newlineIndex + 1);
                 }
                 else
                 {
+                    // Permit one trailing CR while waiting for a fragmented CRLF.
+                    if (Options.ReceiveMaxLineChars > 0 && _stringBuilder.Length > Options.ReceiveMaxLineChars &&
+                        !(_stringBuilder.Length == Options.ReceiveMaxLineChars + 1 && _stringBuilder[_stringBuilder.Length - 1] == '\r'))
+                        FailReceiveLimit();
                     // No more complete lines, break the loop
                     break;
                 }
@@ -256,9 +274,16 @@ namespace Sufficit.Asterisk.IO
 
                 if (!_lineChannel.Writer.TryWrite(line))
                 {
+                    if (Options.ReceiveLineCapacity > 0 && !IsDisposed) FailReceiveLimit();
                     _logger.LogWarning("failed to write line to channel, hash: {hash}", GetHashCode());
                 }
             }
+        }
+
+        private void FailReceiveLimit()
+        {
+            ReceiveLimitExceeded = true;
+            throw new IOException("Socket receive limit exceeded");
         }
 
         #endregion
