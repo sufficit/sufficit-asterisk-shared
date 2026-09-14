@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Microsoft.NET.Sdk" ToolsVersion="Current">
 
 	<PropertyGroup Label="Sufficit Targeting">
@@ -118,14 +118,14 @@
 	</ItemGroup>
 
 	<ItemGroup Label="Sufficit Dependencies">
-		<ProjectReference Include="..\..\sufficit-asterisk-core\src\Sufficit.Asterisk.Core.csproj" Condition="Exists('..\\..\\sufficit-asterisk-core\\src\\Sufficit.Asterisk.Core.csproj')" />
-		<PackageReference Include="Sufficit.Asterisk.Core" Version="1.*" Condition="!Exists('..\\..\\sufficit-asterisk-core\\src\\Sufficit.Asterisk.Core.csproj') "/>
+		<ProjectReference Include="/mnt/sufficit/sufficit-asterisk-core/.worktrees/context-purge-20260914182449/src/Sufficit.Asterisk.Core.csproj" Condition="Exists('/mnt/sufficit/sufficit-asterisk-core/.worktrees/context-purge-20260914182449/src/Sufficit.Asterisk.Core.csproj')" />
+		<PackageReference Include="Sufficit.Asterisk.Core" Version="1.*" Condition="!Exists('/mnt/sufficit/sufficit-asterisk-core/.worktrees/context-purge-20260914182449/src/Sufficit.Asterisk.Core.csproj') "/>
 
-		<ProjectReference Include="..\..\sufficit-asterisk-utils\src\Sufficit.Asterisk.Utils.csproj" Condition="Exists('..\\..\\sufficit-asterisk-utils\\src\\Sufficit.Asterisk.Utils.csproj')" />
-		<PackageReference Include="Sufficit.Asterisk.Utils" Version="1.*" Condition="!Exists('..\\..\\sufficit-asterisk-utils\\src\\Sufficit.Asterisk.Utils.csproj') "/>
+		<ProjectReference Include="/mnt/sufficit/sufficit-asterisk-utils/.worktrees/context-purge-20260914182449/src/Sufficit.Asterisk.Utils.csproj" Condition="Exists('/mnt/sufficit/sufficit-asterisk-utils/.worktrees/context-purge-20260914182449/src/Sufficit.Asterisk.Utils.csproj')" />
+		<PackageReference Include="Sufficit.Asterisk.Utils" Version="1.*" Condition="!Exists('/mnt/sufficit/sufficit-asterisk-utils/.worktrees/context-purge-20260914182449/src/Sufficit.Asterisk.Utils.csproj') "/>
 
-		<ProjectReference Include="..\..\sufficit-utils\src\Sufficit.Utils.csproj" Condition="Exists('..\\..\\sufficit-utils\\src\\Sufficit.Utils.csproj')" />
-		<PackageReference Include="Sufficit.Utils" Version="1.*" Condition="!Exists('..\\..\\sufficit-utils\\src\\Sufficit.Utils.csproj') "/>
+		<ProjectReference Include="/mnt/sufficit/sufficit-utils/.worktrees/context-purge-20260914182449/src/Sufficit.Utils.csproj" Condition="Exists('/mnt/sufficit/sufficit-utils/.worktrees/context-purge-20260914182449/src/Sufficit.Utils.csproj')" />
+		<PackageReference Include="Sufficit.Utils" Version="1.*" Condition="!Exists('/mnt/sufficit/sufficit-utils/.worktrees/context-purge-20260914182449/src/Sufficit.Utils.csproj') "/>
 	</ItemGroup>
 		
 </Project>
